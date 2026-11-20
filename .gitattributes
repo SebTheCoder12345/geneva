@@ -1,0 +1,5 @@
+*.bin binary
+*.glb binary
+*.jpg binary
+*.png binary
+* text=auto eol=lf

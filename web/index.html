@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0d1418">
+<title>Genève · Rade</title>
+<link rel="stylesheet" href="src/style.css">
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<canvas id="c"></canvas>
+
+<div id="start">
+  <div class="card">
+    <h1>GENÈVE</h1>
+    <p class="sub">La Rade · Jardin Anglais · Pont du Mont-Blanc</p>
+    <p class="early">Early preview. Built from swisstopo and OpenStreetMap open data; the look is being improved step by step.</p>
+    <div class="bar"><div id="bar"></div></div>
+    <p id="status">Loading…</p>
+    <button id="go" disabled>Loading</button>
+    <p class="keys desk">Click to look · <b>WASD</b> walk · <b>Shift</b> run · <b>F</b> fly (Space up, C down) · <b>Esc</b> pause</p>
+    <p class="keys touch">Left thumb walks · right thumb looks · <b>✈</b> fly</p>
+    <p class="credits">Data © swisstopo, © OpenStreetMap contributors (ODbL). Engine three.js. <a href="credits.html">Credits</a></p>
+  </div>
+</div>
+
+<div id="hud">
+  <div id="place">Jardin Anglais</div>
+  <div id="fps"></div>
+</div>
+<div id="touchui">
+  <div id="stick"><div id="nub"></div></div>
+  <button id="flyBtn" aria-label="Fly">✈</button>
+  <button id="upBtn" aria-label="Up">▲</button>
+  <button id="downBtn" aria-label="Down">▼</button>
+</div>
+
+<script type="module" src="src/main.js"></script>
+</body>
+</html>
