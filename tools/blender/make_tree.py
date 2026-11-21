@@ -85,7 +85,7 @@ for o in parts:
     bm.to_mesh(o.data)
     bm.free()
     mod = o.modifiers.new('dec', 'DECIMATE')
-    mod.ratio = {'leaves': LEAF_DEC, 'branches': 0.06, 'trunk': 0.02}[next(k for k in ('leaves', 'branches', 'trunk') if k in mat)]
+    mod.ratio = {'leaves': LEAF_DEC, 'branches': 0.022, 'trunk': 0.012}[next(k for k in ('leaves', 'branches', 'trunk') if k in mat)]
     if True:
         bpy.context.view_layer.objects.active = o
         bpy.ops.object.modifier_apply(modifier='dec')

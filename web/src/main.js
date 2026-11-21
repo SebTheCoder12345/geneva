@@ -1,7 +1,9 @@
 import * as THREE from 'three';
 import { loadWorld } from './world.js';
 import { createSky } from './sky.js';
-import { createTerrain, createWater, createBridges } from './ground.js';
+import { createTerrain, createBridges } from './ground.js';
+import { createLake, DETAIL_LAYER } from './lake.js';
+import { createQuays } from './quays.js';
 import { loadOuter } from './outer.js';
 import { loadBuildings } from './buildings.js';
 import { createTrees, loadTreeModel } from './trees.js';
@@ -16,10 +18,10 @@ const params = new URLSearchParams(location.search);
 const mobile = false;  // PC-only: built for desktop GPUs, mouse and keyboard
 // ?q=medium for weaker PCs / laptops, ?q=low for software rendering
 const QUALITY = {
-  high: { pixelRatio: Math.min(devicePixelRatio, 1.5), shadowSize: 4096, shadowRange: 150, reflectionSize: 1024,
-          terrainStep: 2, leafCards: 60, jetParticles: 20000, midStep: 1, ao: true, bloom: true },
-  medium: { pixelRatio: 1, shadowSize: 2048, shadowRange: 120, reflectionSize: 512,
-            terrainStep: 2, leafCards: 46, jetParticles: 12000, midStep: 1, ao: false, bloom: true },
+  high: { pixelRatio: Math.min(devicePixelRatio, 1.25), shadowSize: 4096, shadowRange: 130, reflectionSize: 768,
+          terrainStep: 2, leafCards: 50, jetParticles: 16000, midStep: 2, ao: true, bloom: true },
+  medium: { pixelRatio: 1, shadowSize: 2048, shadowRange: 110, reflectionSize: 512,
+            terrainStep: 2, leafCards: 40, jetParticles: 10000, midStep: 2, ao: false, bloom: true },
   low: { pixelRatio: 1, shadowSize: 1024, shadowRange: 90, reflectionSize: 256,
          terrainStep: 3, leafCards: 26, jetParticles: 5000, midStep: 2, ao: false, bloom: false },
 }[params.get('q') || 'high'];
@@ -61,10 +63,12 @@ async function boot() {
   progress(0.3, 'street surfaces');
   const groundTex = await loadGroundTextures(BASE, renderer);
   const groundMat = createGroundMaterial(world, ortho, groundTex);
-  const terrain = createTerrain(world, groundMat, QUALITY);
+  const terrainMat = createGroundMaterial(world, ortho, groundTex, { cutWater: true, waterMask: mask });
+  const terrain = createTerrain(world, terrainMat, QUALITY);
   scene.add(terrain.mesh, outer.group);
-  scene.add(createWater(world, normals, sky.sunDir, QUALITY, mask, midMask, outer.meta.mid));
+  scene.add(createLake(world, normals, sky.sunDir, QUALITY, mask, midMask, outer.meta.mid));
   scene.add(createBridges(world, groundMat));
+  scene.add(await createQuays(world, BASE, renderer));
 
   progress(0.45, 'buildings');
   try {
@@ -85,6 +89,7 @@ async function boot() {
   try {
     const ch = await loadCharacter(BASE + 'char/xbot.glb');
     scene.add(ch.root);
+    ch.root.traverse((o) => o.layers.set(DETAIL_LAYER));
     player.character = ch;
   } catch (e) {
     console.warn('character not loaded', e);
@@ -100,7 +105,9 @@ async function boot() {
 
   // compile everything once so the first frames don't stutter
   sky.follow(player.pos);
-  const post = createPost(renderer, scene, camera, QUALITY);
+  camera.layers.enable(DETAIL_LAYER);
+  sky.sun.shadow.camera.layers.enable(DETAIL_LAYER);
+  const post = await createPost(renderer, scene, camera, QUALITY);
   renderer.compile(scene, camera);
   post.render();
 

@@ -44,10 +44,13 @@ async function loadArray(url, srgb, renderer) {
   return t;
 }
 
-export function createGroundMaterial(world, ortho, tex) {
+export function createGroundMaterial(world, ortho, tex, { cutWater = false, waterMask = null } = {}) {
   const mu = world.maskUniforms();
   const mat = new THREE.MeshStandardMaterial({ map: ortho, roughness: 0.9, metalness: 0 });
+  if (cutWater) mat.defines.CUT_WATER = '';  // keep the STANDARD define
+  mat.customProgramCacheKey = () => (cutWater ? 'ground-cut' : 'ground');
   mat.onBeforeCompile = (sh) => {
+    sh.uniforms.waterMask = { value: waterMask };
     Object.assign(sh.uniforms, {
       gridOrigin: { value: mu.gridOrigin }, gridSize: { value: mu.gridSize },
       classA: { value: tex.classA }, classB: { value: tex.classB }, marks: { value: tex.marks },
@@ -64,7 +67,7 @@ export function createGroundMaterial(world, ortho, tex) {
         precision highp sampler2DArray;
         varying vec3 vWPos; varying vec3 vWNrm;
         uniform vec2 gridOrigin; uniform vec2 gridSize;
-        uniform sampler2D classA, classB, marks;
+        uniform sampler2D classA, classB, marks, waterMask;
         uniform sampler2DArray albedoArr, nrArr;
         uniform float tileM[${LAYERS}];
         float gHash(vec2 p) { return fract(sin(dot(p, vec2(41.3, 289.1))) * 43758.5453); }
@@ -75,6 +78,10 @@ export function createGroundMaterial(world, ortho, tex) {
       .replace('#include <map_fragment>', `
         vec2 gUV = (vWPos.xz - gridOrigin) / gridSize;
         vec2 cUV = vec2(gUV.x, 1.0 - gUV.y);
+        #ifdef CUT_WATER
+          // the terrain stops exactly at the shoreline; the quay wall and the lake take over
+          if (texture2D(waterMask, cUV).r > 0.5) discard;
+        #endif
         vec3 photo = texture2D(map, cUV).rgb;   // sRGB-decoded by three
         vec3 wa = texture2D(classA, cUV).rgb, wb = texture2D(classB, cUV).rgb;
         float w[${LAYERS}];
@@ -99,6 +106,14 @@ export function createGroundMaterial(world, ortho, tex) {
             a = photo * (l / 0.26) * 0.95;
           }
           gAlb += a * wi; gN += (nr.xy * 2.0 - 1.0) * wi; gRough += nr.z * wi;
+        }
+        // steep ground (embankments, ramps): side-projected stone so the texture is not smeared
+        float steep = 1.0 - smoothstep(0.55, 0.8, vWNrm.y);
+        if (steep > 0.01) {
+          vec2 sp = abs(vWNrm.x) > abs(vWNrm.z) ? vWPos.zy : vWPos.xy;
+          vec3 sa = texture(albedoArr, vec3(sp / tileM[5], 5.0)).rgb;
+          vec3 sn = texture(nrArr, vec3(sp / tileM[5], 5.0)).rgb;
+          gAlb = mix(gAlb, sa * 0.9, steep); gN = mix(gN, vec2(0.0), steep); gRough = mix(gRough, sn.z, steep);
         }
         // grime and patching: slow luminance variation
         float grime = 0.88 + 0.2 * gNoise(vWPos.xz * 0.35) * gNoise(vWPos.xz * 0.05 + 3.0);

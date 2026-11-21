@@ -260,6 +260,12 @@ def build_osm():
         p = p.simplify(0.3)
         if p.area < 20:
             continue
+        # only bridges over the lake/river: the rest (rail and road overpasses) are left to the
+        # building and terrain data, which already contain them
+        c0, r0, c1, r1 = (int(v) for v in (p.bounds[0] - BX0, BY1 - p.bounds[3], p.bounds[2] - BX0, BY1 - p.bounds[1]))
+        sub = water[max(r0, 0):max(r1, 0) + 1, max(c0, 0):max(c1, 0) + 1]
+        if sub.size == 0 or sub.mean() < 0.15:
+            continue
         # deck surface: a plane fitted to the terrain on the dry ends, so the deck meets the road
         ring = np.array(p.exterior.coords)
         samples = []
@@ -301,6 +307,40 @@ def build_osm():
     return bridges
 
 
+def build_quays():
+    """Shoreline polylines (world metres) with the land height behind them, for quay walls."""
+    from scipy import ndimage
+    from shapely.geometry import LineString
+    from skimage import measure
+
+    water = np.array(Image.open(OUT / "water.png")) > 127
+    dtm = np.load(WORK / "dtm_1m.npy")
+    # the terrain model slopes down the face of each quay, so take the highest land within ~4 m
+    land_max = ndimage.maximum_filter(np.where(water, -1e9, dtm), size=9)
+    land_h = np.where(water | (land_max < -1e8), np.nan, land_max)
+    land_h = np.where(np.isnan(land_h) & (land_max > -1e8), land_max, land_h)
+    idx = ndimage.distance_transform_edt(np.isnan(land_h), return_distances=False, return_indices=True)
+    land_near = land_h[idx[0], idx[1]]
+    smooth = ndimage.gaussian_filter(water.astype(np.float32), 0.8)
+    quays = []
+    for cont in measure.find_contours(smooth, 0.5):
+        if len(cont) < 8:
+            continue
+        line = LineString([(c, r) for r, c in cont]).simplify(0.45)
+        if line.length < 6:
+            continue
+        pts = []
+        for c, r in line.coords:
+            top = float(land_near[min(int(r), GRID_H - 1), min(int(c), GRID_W - 1)]) - area.LAKE_LEVEL_M
+            if top < 0.25:  # beaches and slipways: no wall
+                top = None
+            x, z = area.lv95_to_world(BX0 + c + 0.5, BY1 - r - 0.5)
+            pts.append([round(x, 2), round(z, 2), None if top is None else round(top, 2)])
+        quays.append(pts)
+    print("quay lines", len(quays), "vertices", sum(len(q) for q in quays))
+    return quays
+
+
 def quay_spawn():
     """Walk from the Horloge Fleurie toward the Jet d'Eau and stop 5 m before the water."""
     water = np.array(Image.open(OUT / "water.png")) > 127
@@ -334,6 +374,7 @@ def write_world_json(trees, bridges):
         "origin_lv95": area.ORIGIN_LV95,
         "trees": trees,
         "bridges": bridges,
+        "quays": build_quays(),
         "landmarks": landmarks(),
         # Jardin Anglais quay, by the Horloge Fleurie, facing the Jet d'Eau
         "spawn": quay_spawn(),

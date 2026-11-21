@@ -17,9 +17,9 @@ export function createSky(renderer, scene, quality) {
   const sky = new Sky();
   sky.scale.setScalar(100000);
   const u = sky.material.uniforms;
-  u.turbidity.value = 3.2;
+  u.turbidity.value = 2.6;
   u.rayleigh.value = 1.25;
-  u.mieCoefficient.value = 0.0045;
+  u.mieCoefficient.value = 0.003;
   u.mieDirectionalG.value = 0.82;
   const sunDir = sunDirection();
   u.sunPosition.value.copy(sunDir);

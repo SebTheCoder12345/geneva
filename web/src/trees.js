@@ -5,7 +5,8 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { mulberry } from './ground.js';
 
-const NEAR_R = 70, NEAR_MAX = 90;
+const NEAR_R = 55, NEAR_MAX = 45;
+import { DETAIL_LAYER } from './lake.js';
 
 export async function loadTreeModel(url) {
   const gltf = await new GLTFLoader().loadAsync(url);
@@ -15,7 +16,20 @@ export async function loadTreeModel(url) {
     if (!o.isMesh) return;
     const geo = o.geometry.clone().applyMatrix4(o.matrixWorld);
     const mat = o.material;
-    if (/leaves/i.test(mat.name)) { mat.side = THREE.DoubleSide; mat.roughness = 0.75; }
+    // the source packs AO/roughness/metal in one map; the metal channel made leaves mirror the sky
+    mat.metalnessMap = null; mat.metalness = 0;
+    if (/leaves/i.test(mat.name)) {
+      mat.side = THREE.DoubleSide;
+      mat.roughnessMap = null; mat.roughness = 0.8;
+      mat.color.setRGB(0.78, 0.95, 0.62);   // fresher mid-green, closer to plane-tree leaves
+      mat.onBeforeCompile = (sh) => {
+        // light coming through the leaves
+        sh.fragmentShader = sh.fragmentShader.replace('#include <lights_fragment_end>', `#include <lights_fragment_end>
+          reflectedLight.indirectDiffuse += diffuseColor.rgb * 0.10;`);
+      };
+    } else {
+      mat.color.setRGB(1.25, 1.2, 1.05);    // paler bark, like plane trees
+    }
     parts.push({ geo, mat });
   });
   const box = new THREE.Box3();
@@ -83,6 +97,7 @@ export function createTrees(world, quality, model) {
     const im = new THREE.InstancedMesh(geo, mat, NEAR_MAX);
     im.castShadow = true; im.receiveShadow = true; im.count = 0;
     im.frustumCulled = false;
+    im.layers.set(DETAIL_LAYER);   // not drawn into the water reflection
     g.add(im);
     return im;
   });
