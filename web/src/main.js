@@ -4,18 +4,25 @@ import { createSky } from './sky.js';
 import { createTerrain, createWater, createBridges } from './ground.js';
 import { loadOuter } from './outer.js';
 import { loadBuildings } from './buildings.js';
-import { createTrees } from './trees.js';
+import { createTrees, loadTreeModel } from './trees.js';
 import { createJet } from './jet.js';
 import { Player } from './player.js';
+import { loadGroundTextures, createGroundMaterial } from './groundMaterial.js';
+import { loadCharacter } from './character.js';
+import { createPost } from './post.js';
 
 const BASE = 'assets/';
 const params = new URLSearchParams(location.search);
-const mobile = matchMedia('(pointer: coarse)').matches || /Mobi|Android/i.test(navigator.userAgent);
-const QUALITY = (params.get('q') || (mobile ? 'low' : 'high')) === 'low'
-  ? { pixelRatio: Math.min(devicePixelRatio, 1.5), shadowSize: 1024, shadowRange: 90, reflectionSize: 256,
-      terrainStep: 3, leafCards: 26, jetParticles: 5000, midStep: 2 }
-  : { pixelRatio: Math.min(devicePixelRatio, 2), shadowSize: 2048, shadowRange: 140, reflectionSize: 1024,
-      terrainStep: 2, leafCards: 46, jetParticles: 14000, midStep: 1 };
+const mobile = false;  // PC-only: built for desktop GPUs, mouse and keyboard
+// ?q=medium for weaker PCs / laptops, ?q=low for software rendering
+const QUALITY = {
+  high: { pixelRatio: Math.min(devicePixelRatio, 1.5), shadowSize: 4096, shadowRange: 150, reflectionSize: 1024,
+          terrainStep: 2, leafCards: 60, jetParticles: 20000, midStep: 1, ao: true, bloom: true },
+  medium: { pixelRatio: 1, shadowSize: 2048, shadowRange: 120, reflectionSize: 512,
+            terrainStep: 2, leafCards: 46, jetParticles: 12000, midStep: 1, ao: false, bloom: true },
+  low: { pixelRatio: 1, shadowSize: 1024, shadowRange: 90, reflectionSize: 256,
+         terrainStep: 3, leafCards: 26, jetParticles: 5000, midStep: 2, ao: false, bloom: false },
+}[params.get('q') || 'high'];
 
 const bar = document.getElementById('bar');
 const status = document.getElementById('status');
@@ -23,7 +30,7 @@ const go = document.getElementById('go');
 const progress = (f, msg) => { bar.style.width = `${Math.round(f * 100)}%`; if (msg) status.textContent = `Loading ${msg}…`; };
 
 const canvas = document.getElementById('c');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance' });
 renderer.setPixelRatio(QUALITY.pixelRatio);
 renderer.setSize(innerWidth, innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -51,10 +58,13 @@ async function boot() {
   ortho.colorSpace = THREE.SRGBColorSpace;
   ortho.anisotropy = renderer.capabilities.getMaxAnisotropy();
 
-  const terrain = createTerrain(world, ortho, QUALITY);
+  progress(0.3, 'street surfaces');
+  const groundTex = await loadGroundTextures(BASE, renderer);
+  const groundMat = createGroundMaterial(world, ortho, groundTex);
+  const terrain = createTerrain(world, groundMat, QUALITY);
   scene.add(terrain.mesh, outer.group);
   scene.add(createWater(world, normals, sky.sunDir, QUALITY, mask, midMask, outer.meta.mid));
-  scene.add(createBridges(world));
+  scene.add(createBridges(world, groundMat));
 
   progress(0.45, 'buildings');
   try {
@@ -64,10 +74,22 @@ async function boot() {
   }
 
   progress(0.8, 'trees and the Jet d’Eau');
-  scene.add(createTrees(world, QUALITY));
+  let treeModel = null;
+  try { treeModel = await loadTreeModel(BASE + 'trees/jacaranda_tree.glb'); } catch (e) { console.warn('tree model', e); }
+  const trees = createTrees(world, QUALITY, treeModel);
+  scene.add(trees.group);
   scene.add(createJet(world, sky.sunDir, QUALITY));
 
+  progress(0.9, 'walker');
   const player = new Player(camera, world, canvas);
+  try {
+    const ch = await loadCharacter(BASE + 'char/xbot.glb');
+    scene.add(ch.root);
+    player.character = ch;
+  } catch (e) {
+    console.warn('character not loaded', e);
+    player.thirdPerson = false;
+  }
   const sp = world.meta.spawn, jet = world.meta.landmarks.jet_d_eau;
   player.spawn(sp.x, sp.z, jet.x, jet.z);
   if (params.has('cam')) {  // ?cam=x,y,z,yawDeg,pitchDeg  — fixed views for comparison shots
@@ -78,8 +100,9 @@ async function boot() {
 
   // compile everything once so the first frames don't stutter
   sky.follow(player.pos);
+  const post = createPost(renderer, scene, camera, QUALITY);
   renderer.compile(scene, camera);
-  renderer.render(scene, camera);
+  post.render();
 
   progress(1);
   status.textContent = 'Ready.';
@@ -106,12 +129,13 @@ async function boot() {
   const fpsEl = document.getElementById('fps');
   const clock = new THREE.Clock();
   let frames = 0, acc = 0;
-  window.__geneva = { scene, camera, player, world, renderer };  // debugging / capture hooks
+  window.__geneva = { scene, camera, player, world, renderer, post };  // debugging / capture hooks
   renderer.setAnimationLoop(() => {
     const dt = clock.getDelta();
     player.update(dt);
     sky.follow(player.pos);
-    renderer.render(scene, camera);
+    trees.update(camera.position);
+    post.render();
     frames++; acc += dt;
     if (acc > 1) {
       fpsEl.textContent = params.has('fps') ? `${Math.round(frames / acc)} fps` : '';
@@ -137,6 +161,7 @@ addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(innerWidth, innerHeight);
+  window.__geneva?.post?.setSize(innerWidth, innerHeight);
 });
 
 boot().catch((e) => {

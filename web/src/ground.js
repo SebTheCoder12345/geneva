@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { Water } from 'three/addons/objects/Water.js';
 
-export function createTerrain(world, orthoTex, quality) {
+export function createTerrain(world, mat, quality) {
   const step = quality.terrainStep;
   const g = world.g;
   const nx = Math.floor((g.w - 1) / step) + 1;
@@ -33,26 +33,6 @@ export function createTerrain(world, orthoTex, quality) {
   geo.setIndex(new THREE.BufferAttribute(idx, 1));
   geo.computeVertexNormals();
 
-  const detail = makeDetailTexture();
-  const mat = new THREE.MeshStandardMaterial({ map: orthoTex, roughness: 0.92, metalness: 0 });
-  mat.onBeforeCompile = (sh) => {
-    sh.uniforms.detailMap = { value: detail };
-    sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vWPos;')
-      .replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\nvWPos = (modelMatrix * vec4(transformed,1.0)).xyz;');
-    sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vWPos;\nuniform sampler2D detailMap;')
-      .replace('#include <map_fragment>', `#include <map_fragment>
-        // The aerial photo is 0.38 m/px; add fine grain close to the camera so the ground
-        // does not read as a blurred photo underfoot.
-        float dist = length(vWPos - cameraPosition);
-        float dn = texture2D(detailMap, vWPos.xz * 0.45).r * 0.6 + texture2D(detailMap, vWPos.xz * 0.09).r * 0.4;
-        float fine = mix(0.78 + 0.44 * dn, 1.0, smoothstep(15.0, 120.0, dist));
-        diffuseColor.rgb *= fine;
-        // de-saturate & slightly lift the photo's baked shadows
-        float l = dot(diffuseColor.rgb, vec3(0.299,0.587,0.114));
-        diffuseColor.rgb = mix(vec3(l), diffuseColor.rgb, 0.85) * 1.05;`);
-  };
   const mesh = new THREE.Mesh(geo, mat);
   mesh.receiveShadow = true;
   mesh.name = 'terrain';
@@ -99,19 +79,43 @@ export function createWater(world, normalsTex, sunDir, quality, maskTex, midMask
   return water;
 }
 
-export function createBridges(world) {
+export function createBridges(world, groundMat) {
+  // Deck top uses the ground material (asphalt, paint) so it continues the road seamlessly;
+  // the edges get a stone fascia down to 1.4 m below the deck.
   const group = new THREE.Group();
-  const deckTop = new THREE.MeshStandardMaterial({ color: 0x5a5a58, roughness: 0.9 });
-  const deckSide = new THREE.MeshStandardMaterial({ color: 0xb8b1a3, roughness: 0.85 });
+  const side = new THREE.MeshStandardMaterial({ color: 0xb8b1a3, roughness: 0.85 });
   for (const b of world.bridges) {
+    const [a0, bx, bz] = b.plane;
+    const yAt = (x, z) => a0 + bx * x + bz * z + 0.03;
     const shape = new THREE.Shape(b.pts.map(([x, z]) => new THREE.Vector2(x, z)));
-    const geo = new THREE.ExtrudeGeometry(shape, { depth: 1.4, bevelEnabled: false });
-    geo.rotateX(Math.PI / 2);  // shape (x, z) -> world xz, extrusion goes downward
-    const m = new THREE.Mesh(geo, [deckTop, deckSide]);
-    m.position.y = b.y + 0.02;
-    m.castShadow = true;
-    m.receiveShadow = true;
-    group.add(m);
+    const top = new THREE.ShapeGeometry(shape);
+    // ShapeGeometry lies in XY; move (x, y) -> world (x, z) and lift onto the deck plane
+    const pa = top.getAttribute('position');
+    for (let i = 0; i < pa.count; i++) {
+      const x = pa.getX(i), z = pa.getY(i);
+      pa.setXYZ(i, x, yAt(x, z), z);
+    }
+    top.index.array.reverse();  // keep faces pointing up after the axis swap
+    top.computeVertexNormals();
+    const deck = new THREE.Mesh(top, groundMat);
+    deck.receiveShadow = true;
+    deck.castShadow = true;
+    group.add(deck);
+    // fascia
+    const pos = [];
+    const pts = b.pts;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const [x1, z1] = pts[i], [x2, z2] = pts[i + 1];
+      const y1 = yAt(x1, z1), y2 = yAt(x2, z2);
+      pos.push(x1, y1, z1, x2, y2, z2, x2, y2 - 1.4, z2, x1, y1, z1, x2, y2 - 1.4, z2, x1, y1 - 1.4, z1);
+    }
+    const sg = new THREE.BufferGeometry();
+    sg.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    sg.computeVertexNormals();
+    const fascia = new THREE.Mesh(sg, side);
+    side.side = THREE.DoubleSide;
+    fascia.castShadow = true;
+    group.add(fascia);
   }
   group.name = 'bridges';
   return group;

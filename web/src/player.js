@@ -18,6 +18,10 @@ export class Player {
     this.move = new THREE.Vector2();  // touch stick, x = strafe, y = forward
     this.vert = 0;                    // touch up/down in flight
     this.active = false;
+    this.thirdPerson = true;
+    this.character = null;   // set by main once loaded
+    this._lastFeet = new THREE.Vector3();
+    this._camDist = 3.6;
     this._bindKeys();
     this._bindMouse();
     this._bindTouch();
@@ -27,7 +31,7 @@ export class Player {
     const p = this._findWalkable(x, z);
     this.pos.set(p.x, p.y + EYE, p.z);
     this.yaw = Math.atan2(-(faceX - p.x), -(faceZ - p.z));
-    this.pitch = 0.06;
+    this.pitch = -0.05;
     this._apply();
   }
 
@@ -58,6 +62,7 @@ export class Player {
       if (!this.active) return;
       this.keys.add(e.code);
       if (e.code === 'KeyF') this.setFlying(!this.flying);
+      if (e.code === 'KeyV') this.thirdPerson = !this.thirdPerson;
     });
     addEventListener('keyup', (e) => this.keys.delete(e.code));
     addEventListener('blur', () => this.keys.clear());
@@ -134,8 +139,9 @@ export class Player {
   }
 
   update(dt) {
-    if (!this.active) return;
     dt = Math.min(dt, 0.1);
+    const x0 = this.pos.x, z0 = this.pos.z;
+    if (!this.active) { this._finish(dt, x0, z0); return; }
     const k = this.keys;
     let fwd = this.move.y, side = this.move.x, up = this.vert;
     if (k.has('KeyW') || k.has('ArrowUp')) fwd += 1;
@@ -189,12 +195,39 @@ export class Player {
       // subtle head bob when walking
       this._bob = (this._bob || 0) + dt * sp * Math.min(len, 1) * 1.9;
     }
-    this._apply();
+    this._finish(dt, x0, z0);
   }
 
-  _apply() {
+  _finish(dt, x0, z0) {
+    const feet = _v.set(this.pos.x, this.pos.y - EYE, this.pos.z);
+    const tp = this.thirdPerson && !this.flying && this.character;
+    if (this.character) this.character.update(dt, feet, this.pos.x - x0, this.pos.z - z0, !this.flying && this.thirdPerson);
+    this._apply(dt);
+  }
+
+  _apply(dt = 0) {
+    if (this.thirdPerson && !this.flying && this.character) {
+      // orbit camera behind and over the right shoulder, pulled in when a building is in the way
+      const head = _h.set(this.pos.x, this.pos.y - EYE + 1.55, this.pos.z);
+      const cp = Math.cos(this.pitch), sp = Math.sin(this.pitch);
+      const fwd = _f.set(-Math.sin(this.yaw) * cp, sp, -Math.cos(this.yaw) * cp);
+      const right = _r.set(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
+      let want = 3.6;
+      for (let d = 0.5; d <= 3.6; d += 0.25) {
+        const x = head.x - fwd.x * d + right.x * 0.45, z = head.z - fwd.z * d + right.z * 0.45;
+        if (this.world.groundAt(x, z, 99) === null && this.world._cell(this.world.water, x, z) !== 1) { want = d - 0.4; break; }
+      }
+      this._camDist += (want - this._camDist) * (want < this._camDist ? 1 : Math.min(1, dt * 3));
+      const d = Math.max(this._camDist, 0.4);
+      const c = this.camera.position.set(head.x - fwd.x * d + right.x * 0.45, head.y - fwd.y * d + 0.15, head.z - fwd.z * d + right.z * 0.45);
+      c.y = Math.max(c.y, this.world.floorAt(c.x, c.z) + 0.3);
+      this.camera.rotation.set(this.pitch, this.yaw, 0, 'YXZ');
+      return;
+    }
     const bob = this.flying ? 0 : Math.sin(this._bob || 0) * 0.025;
     this.camera.position.set(this.pos.x, this.pos.y + bob, this.pos.z);
     this.camera.rotation.set(this.pitch, this.yaw, 0, 'YXZ');
   }
 }
+
+const _v = new THREE.Vector3(), _h = new THREE.Vector3(), _f = new THREE.Vector3(), _r = new THREE.Vector3();

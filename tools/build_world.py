@@ -260,16 +260,26 @@ def build_osm():
         p = p.simplify(0.3)
         if p.area < 20:
             continue
-        # deck height: terrain on the dry ends of the bridge
+        # deck surface: a plane fitted to the terrain on the dry ends, so the deck meets the road
         ring = np.array(p.exterior.coords)
-        hs = []
+        samples = []
         for e, n in np.array(p.buffer(1.5).exterior.coords):
             c, r = int(e - BX0), int(BY1 - n)
             if 0 <= c < GRID_W and 0 <= r < GRID_H and not water[r, c]:
-                hs.append(dtm[r, c])
-        y = (float(np.median(hs)) if hs else area.LAKE_LEVEL_M + 3.0) - area.LAKE_LEVEL_M
+                x, z = area.lv95_to_world(e, n)
+                samples.append((x, z, dtm[r, c] - area.LAKE_LEVEL_M))
+        if len(samples) >= 3:
+            S = np.array(samples)
+            A = np.c_[np.ones(len(S)), S[:, 0], S[:, 1]]
+            coef, *_ = np.linalg.lstsq(A, S[:, 2], rcond=None)
+            # one end only, or a noisy fit steeper than any real deck: keep it level
+            if (np.ptp(S[:, 0]) < 3 and np.ptp(S[:, 1]) < 3) or max(abs(coef[1]), abs(coef[2])) > 0.06:
+                coef = np.array([float(np.median(S[:, 2])), 0.0, 0.0])
+        else:
+            coef = np.array([3.0, 0.0, 0.0])
+        y = float(np.median([coef[0] + coef[1] * x + coef[2] * z for x, z, _ in samples])) if samples else 3.0
         pts = [[round(a, 2), round(b, 2)] for a, b in (area.lv95_to_world(e, n) for e, n in ring)]
-        bridges.append({"pts": pts, "y": round(y, 2)})
+        bridges.append({"pts": pts, "y": round(y, 2), "plane": [round(float(v), 6) for v in coef]})
     print("bridges", len(bridges))
 
     # --- building footprints -> blocked mask ------------------------------------

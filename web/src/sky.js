@@ -42,9 +42,9 @@ export function createSky(renderer, scene, quality) {
   envScene.add(ground);
   const env = pmrem.fromScene(envScene, 0, 0.1, 1000).texture;
   scene.environment = env;
-  scene.environmentIntensity = 1.0;
+  scene.environmentIntensity = 0.7;
 
-  const sun = new THREE.DirectionalLight(0xfff1dc, 5.5);
+  const sun = new THREE.DirectionalLight(0xffeccf, 6.0);
   sun.position.copy(sunDir).multiplyScalar(400);
   sun.castShadow = true;
   const s = quality.shadowSize;
@@ -55,7 +55,7 @@ export function createSky(renderer, scene, quality) {
   sun.shadow.normalBias = 0.6;
   scene.add(sun, sun.target);
 
-  const hemi = new THREE.HemisphereLight(0xbcd3e6, 0x5b5a50, 0.6);
+  const hemi = new THREE.HemisphereLight(0xc9d6e0, 0x6b6556, 0.4);
   scene.add(hemi);
 
   scene.fog = new THREE.FogExp2(0xa9bccb, 0.00007);

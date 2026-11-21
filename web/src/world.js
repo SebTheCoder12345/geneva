@@ -36,7 +36,7 @@ export class World {
     this.heights = heights;
     this.water = water;
     this.blocked = blocked;
-    this.bridges = meta.bridges.map(b => ({ y: b.y, pts: b.pts, box: bbox(b.pts) }));
+    this.bridges = meta.bridges.map(b => ({ y: b.y, plane: b.plane || [b.y, 0, 0], pts: b.pts, box: bbox(b.pts) }));
   }
   get width() { return this.g.w; }
   get depth() { return this.g.h; }
@@ -73,7 +73,10 @@ export class World {
   // Height a walker stands on, or null if the spot is not walkable.
   groundAt(x, z, footY = Infinity) {
     const br = this.bridgeAt(x, z);
-    if (br && br.y <= footY + 1.0) return br.y;
+    if (br) {
+      const by = deckY(br, x, z);
+      if (by <= footY + 1.0) return by;
+    }
     const inside = this._cell(this.water, x, z);
     if (inside === -1) return null;          // off the map
     if (inside === 1) return null;           // lake / river
@@ -85,7 +88,7 @@ export class World {
   floorAt(x, z) {
     const br = this.bridgeAt(x, z);
     const t = this._cell(this.water, x, z) === 1 ? 0 : this.terrainHeight(x, z);
-    return br ? Math.max(br.y, t) : t;
+    return br ? Math.max(deckY(br, x, z), t) : t;
   }
 
   // world-space UV for textures that cover the grid (north up, flipY = true)
@@ -101,6 +104,8 @@ export class World {
     };
   }
 }
+
+function deckY(b, x, z) { return b.plane[0] + b.plane[1] * x + b.plane[2] * z; }
 
 function bbox(pts) {
   let a = Infinity, b = Infinity, c = -Infinity, d = -Infinity;

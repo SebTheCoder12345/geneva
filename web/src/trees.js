@@ -1,9 +1,30 @@
 // Street and park trees at their OSM positions, sized from the swisstopo canopy height model.
-// Stand-in until Blender-made London plane / horse chestnut models replace it.
+// Near the viewer: a full broadleaf model (Poly Haven, CC0, reduced in Blender), instanced.
+// Further out: cheap leaf-card crowns.
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { mulberry } from './ground.js';
 
-export function createTrees(world, quality) {
+const NEAR_R = 70, NEAR_MAX = 90;
+
+export async function loadTreeModel(url) {
+  const gltf = await new GLTFLoader().loadAsync(url);
+  const parts = [];
+  gltf.scene.updateMatrixWorld(true);
+  gltf.scene.traverse((o) => {
+    if (!o.isMesh) return;
+    const geo = o.geometry.clone().applyMatrix4(o.matrixWorld);
+    const mat = o.material;
+    if (/leaves/i.test(mat.name)) { mat.side = THREE.DoubleSide; mat.roughness = 0.75; }
+    parts.push({ geo, mat });
+  });
+  const box = new THREE.Box3();
+  for (const p of parts) { p.geo.computeBoundingBox(); box.union(p.geo.boundingBox); }
+  const size = box.getSize(new THREE.Vector3());
+  return { parts, height: size.y, width: Math.max(size.x, size.z) };
+}
+
+export function createTrees(world, quality, model) {
   const list = world.meta.trees;  // [x, y, z, height, crownRadius, genus]
   const rnd = mulberry(5);
   const leafTex = makeLeafTexture();
@@ -50,7 +71,53 @@ export function createTrees(world, quality) {
   const g = new THREE.Group();
   g.name = 'trees';
   g.add(trunks, crowns);
-  return g;
+  if (!model) return { group: g, update() {} };
+
+  // full models for the nearest trees, re-picked as the viewer moves
+  const farTrunk = [], farCrown = [];
+  for (let i = 0; i < n; i++) {
+    trunks.getMatrixAt(i, m); farTrunk.push(m.clone());
+    crowns.getMatrixAt(i, m); farCrown.push(m.clone());
+  }
+  const nearMeshes = model.parts.map(({ geo, mat }) => {
+    const im = new THREE.InstancedMesh(geo, mat, NEAR_MAX);
+    im.castShadow = true; im.receiveShadow = true; im.count = 0;
+    im.frustumCulled = false;
+    g.add(im);
+    return im;
+  });
+  const nearMat = list.map(([x, , z, h, r], i) => {
+    const y = world.terrainHeight(x, z);
+    const sy = h / model.height;
+    const sxz = THREE.MathUtils.clamp((Math.max(r, 3) * 2.2) / model.width, sy * 0.6, sy * 1.3);
+    const rq = new THREE.Quaternion().setFromAxisAngle(up, (i * 2.3999) % (Math.PI * 2));
+    return new THREE.Matrix4().compose(new THREE.Vector3(x, y - 0.1, z), rq, new THREE.Vector3(sxz, sy, sxz));
+  });
+  const zero = new THREE.Matrix4().makeScale(0, 0, 0);
+  let lastX = Infinity, lastZ = Infinity;
+  function update(cam) {
+    if (Math.hypot(cam.x - lastX, cam.z - lastZ) < 4) return;
+    lastX = cam.x; lastZ = cam.z;
+    const near = [];
+    for (let i = 0; i < n; i++) {
+      const d = Math.hypot(list[i][0] - cam.x, list[i][2] - cam.z);
+      if (d < NEAR_R && cam.y < 80) near.push([d, i]);
+    }
+    near.sort((a, b) => a[0] - b[0]);
+    near.length = Math.min(near.length, NEAR_MAX);
+    const isNear = new Set(near.map(([, i]) => i));
+    for (let i = 0; i < n; i++) {
+      trunks.setMatrixAt(i, isNear.has(i) ? zero : farTrunk[i]);
+      crowns.setMatrixAt(i, isNear.has(i) ? zero : farCrown[i]);
+    }
+    trunks.instanceMatrix.needsUpdate = crowns.instanceMatrix.needsUpdate = true;
+    for (const im of nearMeshes) {
+      near.forEach(([, i], k) => im.setMatrixAt(k, nearMat[i]));
+      im.count = near.length;
+      im.instanceMatrix.needsUpdate = true;
+    }
+  }
+  return { group: g, update };
 }
 
 function makeCrownGeometry(count, rnd) {
